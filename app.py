@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 import pandas as pd
 import requests
@@ -162,7 +162,7 @@ async def get_partner_transactions(
 
 # Új végpont az Excel letöltéshez (közvetlen híváshoz Adaloból vagy böngészőből)
 @app.get("/download-transactions/{partner_id}")
-async def download_partner_transactions(partner_id: int):
+async def download_partner_transactions(partner_id: int, background_tasks: BackgroundTasks):
     """
     Lekéri egy partner összes 'finalized' tranzakcióját és Excel fájlként visszaadja.
     Ez a végpont közvetlen böngésző vagy Adalo 'Open Website' híváshoz készült.
@@ -258,10 +258,8 @@ async def download_partner_transactions(partner_id: int):
                 filename=filename
             )
             
-            # Fájl törlése miután elküldtük
-            @response.background
-            def cleanup():
-                os.remove(filename)
+            # Fájl törlése miután elküldtük a BackgroundTasks segítségével
+            background_tasks.add_task(os.remove, filename)
             
             return response
             
