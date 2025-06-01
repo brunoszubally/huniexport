@@ -280,6 +280,22 @@ async def download_partner_transactions(partner_id: int, background_tasks: Backg
             df = df.rename(columns=renamed_columns)
             print(f"DataFrame oszlopok (átnevezett): {list(df.columns)}")
             
+            # Dátum formázása a 'Tranzakció dátuma' oszlopban
+            if "Tranzakció dátuma" in df.columns:
+                try:
+                    # Átalakítás datetime objektummá
+                    df["Tranzakció dátuma"] = pd.to_datetime(df["Tranzakció dátuma"])
+                    # Formázás a kívánt string formátumra
+                    df["Tranzakció dátuma"] = df["Tranzakció dátuma"].dt.strftime('%Y-%m-%d %H:%M')
+                    print("Tranzakció dátuma oszlop formázva.")
+                except Exception as e:
+                    print(f"Hiba a dátum formázása során: {str(e)}")
+                    # Hibakezelés: ha nem sikerül formázni, hagyjuk az eredeti értéket
+                    pass # Folytatjuk az eredeti dátum formátummal
+            else:
+                 print("'Tranzakció dátuma' oszlop nem található a formázáshoz.")
+
+            
             # Excel fájl mentése
             filename = f"transactions_partner_{partner_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             print(f"Excel fájl mentése (Excel végpont): {filename}")
