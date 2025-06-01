@@ -165,11 +165,12 @@ async def get_partner_transactions(
 async def download_partner_transactions(
     partner_id: int,
     background_tasks: BackgroundTasks,
-    from_date: Optional[str] = Query(None, description="Optional: Szűrés ettől a dátumtól (YYYY-MM-DD formátum)")
+    from_date: Optional[str] = Query(None, description="Optional: Szűrés ettől a dátumtól (DD/MM/YYYY formátum)"),
+    to_date: Optional[str] = Query(None, description="Optional: Szűrés eddig a dátumig (DD/MM/YYYY formátum)")
 ):
     """
     Lekéri egy partner összes 'finalized' tranzakcióját és Excel fájlként visszaadja.
-    Szűrhető a tranzakció dátuma alapján (updated_at).
+    Szűrhető a tranzakció dátuma alapján (updated_at) egy megadott időszakban.
     Ez a végpont közvetlen böngésző vagy Adalo 'Open Website' híváshoz készült.
     """
     if not ADALO_API_KEY:
@@ -226,20 +227,42 @@ async def download_partner_transactions(
             
             print(f"Összes Adalo tranzakció száma (Excel végpont): {len(transactions)}")
             
-            # Dátum paraméter feldolgozása
+            # Dátum paraméterek feldolgozása
             from_datetime = None
             if from_date:
                 try:
-                    # Próbáljuk meg YYYY-MM-DD formátumként értelmezni, és UTC-re konvertálni
-                    from_datetime = datetime.strptime(from_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                    # Próbáljuk meg DD/MM/YYYY formátumként értelmezni, és a nap elejére (UTC) konvertálni
+                    from_datetime = datetime.strptime(from_date, '%d/%m/%Y').replace(tzinfo=timezone.utc)
                     print(f"Szűrési kezdő dátum: {from_datetime}")
                 except ValueError:
                     raise HTTPException(
                         status_code=400,
-                        detail="Érvénytelen dátum formátum a from_date paraméterben. Használd a YYYY-MM-DD formátumot."
+                        detail="Érvénytelen dátum formátum a from_date paraméterben. Használd a DD/MM/YYYY formátumot."
                     )
+
+            to_datetime = None
+            if to_date:
+                try:
+                    # Próbáljuk meg DD/MM/YYYY formátumként értelmezni, és a nap végére (UTC) konvertálni
+                    # Hozzáadunk 1 napot és visszamegyünk 1 másodpercet, hogy a nap végét is magába foglalja
+                    to_datetime = datetime.strptime(to_date, '%d/%m/%Y').replace(tzinfo=timezone.utc)
+                    to_datetime = to_datetime + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                    print(f"Szűrési záró dátum: {to_datetime}")
+                except ValueError:
+                     raise HTTPException(
+                        status_code=400,
+                        detail="Érvénytelen dátum formátum a to_date paraméterben. Használd a DD/MM/YYYY formátumot."
+                    )
+
+            # Dátum tartomány validálása (ha mindkettő meg van adva)
+            if from_datetime and to_datetime and from_datetime > to_datetime:
+                 raise HTTPException(
+                     status_code=400,
+                     detail="A from_date nem lehet későbbi, mint a to_date."
+                 )
+
             
-            # Szűrés partner ID, státusz és dátum alapján
+            # Szűrés partner ID, státusz és dátum tartomány alapján
             finalized_partner_transactions = []
             for t in transactions:
                 if isinstance(t, dict):
@@ -247,18 +270,32 @@ async def download_partner_transactions(
                          if "partner_transaction" in t:
                             if partner_id in t["partner_transaction"]:
                                 # Dátum szűrés
-                                if from_datetime:
+                                transaction_date_str = t.get("updated_at")
+                                if transaction_date_str:
                                     try:
                                         # Adalo dátum string átalakítása datetime objektummá (UTC-ben)
-                                        updated_at_datetime = datetime.strptime(t.get("updated_at"), '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-                                        if updated_at_datetime >= from_datetime:
-                                            finalized_partner_transactions.append(t)
+                                        updated_at_datetime = datetime.strptime(transaction_date_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                                        
+                                        # Ellenőrzés a dátum tartományra
+                                        include_transaction = True
+                                        if from_datetime and updated_at_datetime < from_datetime:
+                                            include_transaction = False
+                                        if to_datetime and updated_at_datetime > to_datetime:
+                                            include_transaction = False
+                                        
+                                        if include_transaction:
+                                             finalized_partner_transactions.append(t)
+
                                     except (ValueError, TypeError) as e:
-                                        print(f"Figyelmeztetés: Hibás updated_at formátum a tranzakcióban (id: {t.get('id')}). Kihagyva a dátum szűrésből: {e}")
-                                        # Ha a dátum formátum hibás, kihagyjuk a szűrésből, de a tranzakciót nem vesszük be
+                                        print(f"Figyelmeztetés: Hibás updated_at formátum a tranzakcióban (id: {t.get('id')}, érték: {transaction_date_str}). Kihagyva a dátum szűrésből: {e}")
+                                        # Ha a dátum formátum hibás, kihagyjuk a tranzakciót
                                         pass
+                                elif from_datetime or to_datetime:
+                                     # Ha van dátumszűrő, de a tranzakción nincs updated_at, akkor kihagyjuk
+                                     print(f"Figyelmeztetés: Hiányzó updated_at a tranzakcióban (id: {t.get('id')}). Kihagyva a dátum szűrésből.")
+                                     pass
                                 else:
-                                    # Nincs dátum szűrés, csak partner ID és státusz
+                                    # Nincs dátum szűrés, és van partner ID, státusz, és partner_transaction
                                     finalized_partner_transactions.append(t)
             
             print(f"Talált 'finalized' partner tranzakciók száma (Excel végpont, dátum szűrővel): {len(finalized_partner_transactions)}")
