@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.responses import JSONResponse, FileResponse
 import pandas as pd
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from dotenv import load_dotenv
 from typing import List, Optional
@@ -162,9 +162,14 @@ async def get_partner_transactions(
 
 # Új végpont az Excel letöltéshez (közvetlen híváshoz Adaloból vagy böngészőből)
 @app.get("/download-transactions/{partner_id}")
-async def download_partner_transactions(partner_id: int, background_tasks: BackgroundTasks):
+async def download_partner_transactions(
+    partner_id: int,
+    background_tasks: BackgroundTasks,
+    from_date: Optional[str] = Query(None, description="Optional: Szűrés ettől a dátumtól (YYYY-MM-DD formátum)")
+):
     """
     Lekéri egy partner összes 'finalized' tranzakcióját és Excel fájlként visszaadja.
+    Szűrhető a tranzakció dátuma alapján (updated_at).
     Ez a végpont közvetlen böngésző vagy Adalo 'Open Website' híváshoz készült.
     """
     if not ADALO_API_KEY:
@@ -221,16 +226,42 @@ async def download_partner_transactions(partner_id: int, background_tasks: Backg
             
             print(f"Összes Adalo tranzakció száma (Excel végpont): {len(transactions)}")
             
-            # Szűrés partner ID és státusz alapján
+            # Dátum paraméter feldolgozása
+            from_datetime = None
+            if from_date:
+                try:
+                    # Próbáljuk meg YYYY-MM-DD formátumként értelmezni, és UTC-re konvertálni
+                    from_datetime = datetime.strptime(from_date, '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                    print(f"Szűrési kezdő dátum: {from_datetime}")
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Érvénytelen dátum formátum a from_date paraméterben. Használd a YYYY-MM-DD formátumot."
+                    )
+            
+            # Szűrés partner ID, státusz és dátum alapján
             finalized_partner_transactions = []
             for t in transactions:
                 if isinstance(t, dict):
                     if t.get("transaction_status") == "finalized":
                          if "partner_transaction" in t:
                             if partner_id in t["partner_transaction"]:
-                                finalized_partner_transactions.append(t)
+                                # Dátum szűrés
+                                if from_datetime:
+                                    try:
+                                        # Adalo dátum string átalakítása datetime objektummá (UTC-ben)
+                                        updated_at_datetime = datetime.strptime(t.get("updated_at"), '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                                        if updated_at_datetime >= from_datetime:
+                                            finalized_partner_transactions.append(t)
+                                    except (ValueError, TypeError) as e:
+                                        print(f"Figyelmeztetés: Hibás updated_at formátum a tranzakcióban (id: {t.get('id')}). Kihagyva a dátum szűrésből: {e}")
+                                        # Ha a dátum formátum hibás, kihagyjuk a szűrésből, de a tranzakciót nem vesszük be
+                                        pass
+                                else:
+                                    # Nincs dátum szűrés, csak partner ID és státusz
+                                    finalized_partner_transactions.append(t)
             
-            print(f"Talált 'finalized' partner tranzakciók száma (Excel végpont): {len(finalized_partner_transactions)}")
+            print(f"Talált 'finalized' partner tranzakciók száma (Excel végpont, dátum szűrővel): {len(finalized_partner_transactions)}")
             
             if not finalized_partner_transactions:
                  # Excel végponton 404-et adunk vissza, ha nincs adat
@@ -284,8 +315,9 @@ async def download_partner_transactions(partner_id: int, background_tasks: Backg
             if "Tranzakció dátuma" in df.columns:
                 try:
                     # Átalakítás datetime objektummá
-                    df["Tranzakció dátuma"] = pd.to_datetime(df["Tranzakció dátuma"])
-                    # Formázás a kívánt string formátumra
+                    # Az Adalo API válasz ISO formátumú, UTC időzónával
+                    df["Tranzakció dátuma"] = pd.to_datetime(df["Tranzakció dátuma"], utc=True)
+                    # Formázás a kívánt string formátumra (óra, perc)
                     df["Tranzakció dátuma"] = df["Tranzakció dátuma"].dt.strftime('%Y-%m-%d %H:%M')
                     print("Tranzakció dátuma oszlop formázva.")
                 except Exception as e:
