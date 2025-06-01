@@ -242,7 +242,43 @@ async def download_partner_transactions(partner_id: int, background_tasks: Backg
             # DataFrame létrehozása
             print("DataFrame létrehozása (Excel végpont)...")
             df = pd.DataFrame(finalized_partner_transactions)
-            print(f"DataFrame oszlopok (Excel végpont): {list(df.columns)}")
+            print(f"DataFrame oszlopok (eredeti): {list(df.columns)}")
+            
+            # Kívánt oszlopok kiválasztása és átnevezése
+            desired_columns = [
+                "id",
+                "transaction_status",
+                "user_transaction",
+                "partner_transaction", # Eredetileg kért oszlop, de a lekeresnel szurtunk ra, user_transaction es coupon_transaction volt helyette
+                "coupon_transaction",
+                "spend_value",
+                "discount_value",
+                "saved_value",
+                "hunicoin_value",
+                "updated_at"
+            ]
+            # Ellenőrizzük, hogy a kívánt oszlopok léteznek-e a DataFrame-ben
+            existing_columns = [col for col in desired_columns if col in df.columns]
+            df = df[existing_columns]
+            print(f"DataFrame oszlopok (kiválasztott): {list(df.columns)}")
+            
+            # Fejlécek átnevezése
+            column_mapping = {
+                "id": "Tranzakció azonosítója",
+                "transaction_status": "Tranzakció státusza",
+                "user_transaction": "User id-ja",
+                "partner_transaction": "Partner id-ja", # Hozzáadva az átnevezéshez, ha létezik
+                "coupon_transaction": "Kupon id-ja",
+                "spend_value": "Költés",
+                "discount_value": "Kedvezmény %",
+                "saved_value": "Spórolás",
+                "hunicoin_value": "Hunicoinok száma",
+                "updated_at": "Tranzakció dátuma"
+            }
+            # Csak a kiválasztott oszlopoknak megfelelő mapping használata
+            renamed_columns = {old_name: new_name for old_name, new_name in column_mapping.items() if old_name in df.columns}
+            df = df.rename(columns=renamed_columns)
+            print(f"DataFrame oszlopok (átnevezett): {list(df.columns)}")
             
             # Excel fájl mentése
             filename = f"transactions_partner_{partner_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
