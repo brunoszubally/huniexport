@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 import pandas as pd
 import requests
 from datetime import datetime
@@ -56,6 +56,7 @@ async def get_partner_transactions(
 ):
     """
     Lekéri egy partner összes 'finalized' tranzakcióját és JSON-ként visszaadja (nincs API kulcs védelem)
+    Ez a végpont Adalo custom function-ök számára készült.
     """
     partner_id = request_data.partner_id
 
@@ -158,6 +159,128 @@ async def get_partner_transactions(
     except Exception as e:
          print(f"Váratlan hiba történt: {str(e)}")
          raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
+# Új végpont az Excel letöltéshez (közvetlen híváshoz Adaloból vagy böngészőből)
+@app.get("/download-transactions/{partner_id}")
+async def download_partner_transactions(partner_id: int):
+    """
+    Lekéri egy partner összes 'finalized' tranzakcióját és Excel fájlként visszaadja.
+    Ez a végpont közvetlen böngésző vagy Adalo 'Open Website' híváshoz készült.
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print(f"\n=== Új Excel letöltési kérés kezdése partner_id={partner_id} ===")
+    
+    # Adalo API hívás
+    url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/{ADALO_COLLECTION_ID}"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    print(f"API URL: {url}")
+    print(f"API Headers: {headers}")
+    
+    try:
+        print("Adalo API hívás indítása (Excel végpont)...")
+        response = requests.get(url, headers=headers)
+        print(f"Adalo API válasz státuszkód: {response.status_code}")
+        print(f"Adalo API válasz fejlécek: {dict(response.headers)}")
+        
+        if response.status_code != 200:
+            print(f"Hibás Adalo API válasz (Excel végpont): {response.text}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Adalo API hiba: {response.text}"
+            )
+        
+        print("Adalo API válasz feldolgozása (Excel végpont)...")
+        print(f"Válasz tartalom (első 1000 karakter): {response.text[:1000]}")
+        
+        try:
+            transactions = response.json()
+            print(f"JSON válasz típusa: {type(transactions)}")
+            
+            # Adalo API válasz formátum ellenőrzése
+            if isinstance(transactions, dict):
+                if "records" in transactions:
+                    transactions = transactions["records"]
+                    print(f"Talált records lista hossza: {len(transactions)}")
+                #else:
+                    #print(f"Hiányzó 'records' kulcs az Adalo API válaszból (Excel végpont).")
+                    #raise HTTPException(
+                    #    status_code=500,
+                    #    detail=f"Hiányzó 'records' kulcs az Adalo API válaszból (Excel végpont)."
+                    #)
+            elif not isinstance(transactions, list):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Váratlan Adalo API válasz formátum (Excel végpont): {type(transactions)}"
+                )
+            
+            print(f"Összes Adalo tranzakció száma (Excel végpont): {len(transactions)}")
+            
+            # Szűrés partner ID és státusz alapján
+            finalized_partner_transactions = []
+            for t in transactions:
+                if isinstance(t, dict):
+                    if t.get("transaction_status") == "finalized":
+                         if "partner_transaction" in t:
+                            if partner_id in t["partner_transaction"]:
+                                finalized_partner_transactions.append(t)
+            
+            print(f"Talált 'finalized' partner tranzakciók száma (Excel végpont): {len(finalized_partner_transactions)}")
+            
+            if not finalized_partner_transactions:
+                 # Excel végponton 404-et adunk vissza, ha nincs adat
+                 raise HTTPException(
+                    status_code=404,
+                    detail=f"Nem található 'finalized' tranzakció a partner_id={partner_id} számára"
+                 )
+            
+            # DataFrame létrehozása
+            print("DataFrame létrehozása (Excel végpont)...")
+            df = pd.DataFrame(finalized_partner_transactions)
+            print(f"DataFrame oszlopok (Excel végpont): {list(df.columns)}")
+            
+            # Excel fájl mentése
+            filename = f"transactions_partner_{partner_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            print(f"Excel fájl mentése (Excel végpont): {filename}")
+            df.to_excel(filename, index=False)
+            
+            print("Fájl sikeresen létrehozva (Excel végpont)!")
+            
+            # FileResponse létrehozása
+            response = FileResponse(
+                filename,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename=filename
+            )
+            
+            # Fájl törlése miután elküldtük
+            @response.background
+            def cleanup():
+                os.remove(filename)
+            
+            return response
+            
+        except ValueError as e:
+            print(f"JSON feldolgozási hiba (Excel végpont): {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Hibás JSON válasz az Adalo API-tól (Excel végpont): {str(e)}"
+            )
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Adalo API hívási hiba (Excel végpont): {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az Adalo API hívás során (Excel végpont): {str(e)}"
+        )
+    except Exception as e:
+         print(f"Váratlan hiba történt (Excel végpont): {str(e)}")
+         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba (Excel végpont): {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
