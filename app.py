@@ -1,5 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 import pandas as pd
 import requests
 from datetime import datetime
@@ -7,7 +7,6 @@ import os
 from dotenv import load_dotenv
 from typing import List, Optional
 from pydantic import BaseModel
-from fastapi.security import APIKeyHeader
 
 # Környezeti változók betöltése
 load_dotenv()
@@ -17,16 +16,16 @@ app = FastAPI(title="Huniexport API")
 # Adalo API konfiguráció (környezeti változóból)
 ADALO_APP_ID = "78abf0f7-0d48-492e-98b5-ee301ebe700e"
 ADALO_COLLECTION_ID = "t_e11t5tqgg6jbkbq4a1z596kqt"
-ADALO_API_KEY = os.getenv("ADALO_API_KEY") # Visszaállítjuk a környezeti változót
+ADALO_API_KEY = os.getenv("ADALO_API_KEY")
 
-# Saját API kulcs az autentikációhoz (környezeti változóból)
-API_KEY = os.getenv("SERVICE_API_KEY")
-api_key_header = APIKeyHeader(name="X-API-Key")
+# Saját API kulcs az autentikációhoz (eltávolítva)
+# API_KEY = os.getenv("SERVICE_API_KEY")
+# api_key_header = APIKeyHeader(name="X-API-Key")
 
-def get_api_key(api_key: str = Depends(api_key_header)):
-    if api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Érvénytelen API kulcs")
-    return api_key
+# def get_api_key(api_key: str = Depends(api_key_header)):
+#     if api_key != API_KEY:
+#         raise HTTPException(status_code=401, detail="Érvénytelen API kulcs")
+#     return api_key
 
 class Transaction(BaseModel):
     id: int
@@ -52,16 +51,16 @@ class GetTransactionsRequest(BaseModel):
 
 @app.post("/get-partner-transactions")
 async def get_partner_transactions(
-    request_data: GetTransactionsRequest,
-    api_key: str = Depends(get_api_key) # Autentikáció hozzáadása
+    request_data: GetTransactionsRequest
+    # api_key: str = Depends(get_api_key) # Autentikáció eltávolítva
 ):
     """
-    Lekéri egy partner összes 'finalized' tranzakcióját és JSON-ként visszaadja
+    Lekéri egy partner összes 'finalized' tranzakcióját és JSON-ként visszaadja (nincs API kulcs védelem)
     """
     partner_id = request_data.partner_id
 
     if not ADALO_API_KEY:
-        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (SERVICE_API_KEY környezeti változó)")
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
 
     print(f"\n=== Új kérés kezdése partner_id={partner_id} ===")
     
@@ -164,6 +163,6 @@ if __name__ == "__main__":
     import uvicorn
     # Ezt a blokkot csak lokális fejlesztéshez használjuk.
     # Koyeb/Render más módon indítja el az alkalmazást (pl. gunicorn vagy uvicorn)
-    # Ügyelj rá, hogy a SERVICE_API_KEY és ADALO_API_KEY környezeti változók be legyenek állítva lokálisan (.env)
+    # Ügyelj rá, hogy az ADALO_API_KEY környezeti változó be legyen állítva lokálisan (.env)
     # és a telepítési platformon is.
     uvicorn.run(app, host="0.0.0.0", port=8000) 
