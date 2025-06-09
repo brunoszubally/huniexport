@@ -13,10 +13,12 @@ load_dotenv()
 
 app = FastAPI(title="Huniexport API")
 
-# Adalo API konfiguráció (környezeti változóból)
+# Adalo API konfiguráció
 ADALO_APP_ID = "78abf0f7-0d48-492e-98b5-ee301ebe700e"
 ADALO_COLLECTION_ID = "t_e11t5tqgg6jbkbq4a1z596kqt"
-ADALO_API_KEY = os.getenv("ADALO_API_KEY")
+
+# API kulcs beállítása: először környezeti változóból, ha nincs, akkor közvetlenül a kódban
+ADALO_API_KEY = os.getenv("ADALO_API_KEY", "2oq7qmxcjwa4m1tcqdf1w1e8i")
 
 # Saját API kulcs az autentikációhoz (eltávolítva)
 # API_KEY = os.getenv("SERVICE_API_KEY")
@@ -400,6 +402,269 @@ async def download_partner_transactions(
     except Exception as e:
          print(f"Váratlan hiba történt (Excel végpont): {str(e)}")
          raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba (Excel végpont): {str(e)}")
+
+# Új végpont a felhasználók Excel letöltéséhez
+@app.get("/download-users")
+async def download_users(
+    background_tasks: BackgroundTasks,
+    from_date: Optional[str] = Query(None, description="Optional: Szűrés ettől a dátumtól (DD/MM/YYYY formátum)"),
+    to_date: Optional[str] = Query(None, description="Optional: Szűrés eddig a dátumig (DD/MM/YYYY formátum)")
+):
+    """
+    Lekéri az összes felhasználót az Adalo API-ból és Excel fájlként visszaadja.
+    Szűrhető a felhasználó létrehozásának dátuma alapján egy megadott időszakban.
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print("\n=== Új felhasználó Excel letöltési kérés kezdése ===")
+    
+    # Adalo Users API hívás
+    url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/users"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    print(f"API URL: {url}")
+    
+    try:
+        print("Adalo Users API hívás indítása...")
+        response = requests.get(url, headers=headers)
+        print(f"Adalo API válasz státuszkód: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"Hibás Adalo API válasz: {response.text}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Adalo API hiba: {response.text}"
+            )
+        
+        try:
+            users = response.json()
+            
+            # Adalo API válasz formátum ellenőrzése
+            if isinstance(users, dict) and "users" in users:
+                users = users["users"]
+            elif not isinstance(users, list):
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Váratlan Adalo API válasz formátum: {type(users)}"
+                )
+            
+            print(f"Összes felhasználó száma: {len(users)}")
+            
+            # Dátum paraméterek feldolgozása
+            from_datetime = None
+            if from_date:
+                try:
+                    from_datetime = datetime.strptime(from_date, '%d/%m/%Y').replace(tzinfo=timezone.utc)
+                    print(f"Szűrési kezdő dátum: {from_datetime}")
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Érvénytelen dátum formátum a from_date paraméterben. Használd a DD/MM/YYYY formátumot."
+                    )
+
+            to_datetime = None
+            if to_date:
+                try:
+                    to_datetime = datetime.strptime(to_date, '%d/%m/%Y').replace(tzinfo=timezone.utc)
+                    to_datetime = to_datetime + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                    print(f"Szűrési záró dátum: {to_datetime}")
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Érvénytelen dátum formátum a to_date paraméterben. Használd a DD/MM/YYYY formátumot."
+                    )
+
+            # Dátum tartomány validálása
+            if from_datetime and to_datetime and from_datetime > to_datetime:
+                raise HTTPException(
+                    status_code=400,
+                    detail="A from_date nem lehet későbbi, mint a to_date."
+                )
+
+            # Szűrés dátum alapján
+            filtered_users = []
+            for user in users:
+                if isinstance(user, dict):
+                    created_at_str = user.get("created_at")
+                    if created_at_str:
+                        try:
+                            created_at = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                            
+                            include_user = True
+                            if from_datetime and created_at < from_datetime:
+                                include_user = False
+                            if to_datetime and created_at > to_datetime:
+                                include_user = False
+                            
+                            if include_user:
+                                filtered_users.append(user)
+                        except (ValueError, TypeError) as e:
+                            print(f"Figyelmeztetés: Hibás created_at formátum a felhasználóban (id: {user.get('id')}). Kihagyva: {e}")
+                            pass
+                    elif from_datetime or to_datetime:
+                        print(f"Figyelmeztetés: Hiányzó created_at a felhasználóban (id: {user.get('id')}). Kihagyva.")
+                        pass
+                    else:
+                        filtered_users.append(user)
+
+            print(f"Szűrt felhasználók száma: {len(filtered_users)}")
+            
+            if not filtered_users:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Nem található felhasználó a megadott feltételek alapján"
+                )
+
+            # DataFrame létrehozása
+            df = pd.DataFrame(filtered_users)
+            
+            # Kívánt oszlopok kiválasztása és átnevezése
+            column_mapping = {
+                "id": "Felhasználó azonosító",
+                "email": "Email cím",
+                "phone": "Telefonszám",
+                "created_at": "Regisztráció dátuma",
+                "updated_at": "Utolsó módosítás dátuma",
+                "first_name": "Keresztnév",
+                "last_name": "Vezetéknév",
+                "status": "Státusz"
+            }
+            
+            # Csak azokat az oszlopokat választjuk ki, amelyek léteznek a DataFrame-ben
+            existing_columns = [col for col in column_mapping.keys() if col in df.columns]
+            df = df[existing_columns]
+            
+            # Oszlopok átnevezése
+            df = df.rename(columns={old: new for old, new in column_mapping.items() if old in df.columns})
+            
+            # Dátum formázás
+            for date_col in ["Regisztráció dátuma", "Utolsó módosítás dátuma"]:
+                if date_col in df.columns:
+                    try:
+                        df[date_col] = pd.to_datetime(df[date_col], utc=True)
+                        df[date_col] = df[date_col].dt.strftime('%Y-%m-%d %H:%M')
+                    except Exception as e:
+                        print(f"Hiba a {date_col} formázása során: {str(e)}")
+                        pass
+
+            # Excel fájl mentése
+            filename = f"users_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            df.to_excel(filename, index=False)
+            
+            # FileResponse létrehozása
+            response = FileResponse(
+                filename,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename=filename
+            )
+            
+            # Fájl törlése miután elküldtük
+            background_tasks.add_task(os.remove, filename)
+            
+            return response
+            
+        except ValueError as e:
+            print(f"JSON feldolgozási hiba: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Hibás JSON válasz az Adalo API-tól: {str(e)}"
+            )
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Adalo API hívási hiba: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az Adalo API hívás során: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Váratlan hiba történt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
+# Teszt végpont az Adalo API válasz megjelenítéséhez
+@app.get("/test-users")
+async def test_users():
+    """
+    Lekéri a felhasználók számát és létrehoz egy új rekordot a statisztikák collection-ben
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print("\n=== Felhasználók számának lekérdezése és statisztika létrehozása ===")
+    
+    # Adalo Users API hívás
+    users_url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/t_0013b9f2134b4b79b0820993b01145d4"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Felhasználók lekérdezése
+        response = requests.get(users_url, headers=headers)
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Adalo API hiba a felhasználók lekérdezésekor: {response.text}"
+            )
+        
+        try:
+            data = response.json()
+            users = data.get("records", [])
+            
+            # Mai dátum lekérdezése
+            today = datetime.now(timezone.utc)
+            
+            # Felhasználók számolása, akik a mai napon lettek létrehozva
+            users_today = sum(1 for user in users if user.get("created_at") and 
+                            datetime.strptime(user["created_at"], '%Y-%m-%dT%H:%M:%S.%fZ').date() == today.date())
+            
+            # Összes felhasználó száma
+            total_users = len(users)
+            
+            # Új statisztika rekord létrehozása
+            stats_url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/t_ashzitr0lvm0u1dibo7jada75"
+            
+            # Új rekord adatai
+            new_record = {
+                "user_number": total_users,
+                "registered_date": today.isoformat() + "Z"  # ISO formátum UTC időzónával
+            }
+            
+            # POST kérés az új rekord létrehozásához
+            stats_response = requests.post(stats_url, headers=headers, json=new_record)
+            
+            if stats_response.status_code not in [200, 201]:
+                raise HTTPException(
+                    status_code=stats_response.status_code,
+                    detail=f"Adalo API hiba a statisztika létrehozásakor: {stats_response.text}"
+                )
+            
+            return {
+                "date": today.strftime("%Y-%m-%d"),
+                "users_today": users_today,
+                "total_users": total_users,
+                "stats_record_created": True,
+                "stats_record": new_record
+            }
+            
+        except ValueError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Hibás JSON válasz az Adalo API-tól: {str(e)}"
+            )
+        
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az Adalo API hívás során: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
