@@ -14,11 +14,11 @@ load_dotenv()
 app = FastAPI(title="Huniexport API")
 
 # Adalo API konfiguráció
-ADALO_APP_ID = "78abf0f7-0d48-492e-98b5-ee301ebe700e"
+ADALO_APP_ID = "105b8ea3-f2e9-498e-b939-03d445237d78"
 ADALO_COLLECTION_ID = "t_e11t5tqgg6jbkbq4a1z596kqt"
 
 # API kulcs beállítása: először környezeti változóból, ha nincs, akkor közvetlenül a kódban
-ADALO_API_KEY = os.getenv("ADALO_API_KEY", "2oq7qmxcjwa4m1tcqdf1w1e8i")
+ADALO_API_KEY = os.getenv("ADALO_API_KEY")
 
 # Saját API kulcs az autentikációhoz (eltávolítva)
 # API_KEY = os.getenv("SERVICE_API_KEY")
@@ -629,19 +629,31 @@ async def test_users():
             # Új statisztika rekord létrehozása
             stats_url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/t_ashzitr0lvm0u1dibo7jada75"
             
-            # Új rekord adatai
+            # Új rekord adatai - módosítva a dátum formátum
             new_record = {
                 "user_number": total_users,
-                "registered_date": today.isoformat() + "Z"  # ISO formátum UTC időzónával
+                "registered_date": today.strftime("%Y-%m-%dT%H:%M:%S.000Z")  # Pontos formátum az Adalo API-hoz
             }
+            
+            print(f"\nÚj rekord adatai:")
+            print(f"URL: {stats_url}")
+            print(f"Headers: {headers}")
+            print(f"Body: {new_record}")
             
             # POST kérés az új rekord létrehozásához
             stats_response = requests.post(stats_url, headers=headers, json=new_record)
             
+            print(f"\nStatisztika API válasz:")
+            print(f"Status code: {stats_response.status_code}")
+            print(f"Response headers: {dict(stats_response.headers)}")
+            print(f"Response body: {stats_response.text}")
+            
             if stats_response.status_code not in [200, 201]:
+                error_detail = f"Adalo API hiba a statisztika létrehozásakor: Status {stats_response.status_code}, Response: {stats_response.text}"
+                print(f"\nHiba: {error_detail}")
                 raise HTTPException(
                     status_code=stats_response.status_code,
-                    detail=f"Adalo API hiba a statisztika létrehozásakor: {stats_response.text}"
+                    detail=error_detail
                 )
             
             return {
@@ -664,6 +676,7 @@ async def test_users():
             detail=f"Hiba az Adalo API hívás során: {str(e)}"
         )
     except Exception as e:
+        print(f"\nVáratlan hiba részletei: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
 if __name__ == "__main__":
