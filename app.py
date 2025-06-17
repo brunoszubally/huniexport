@@ -18,7 +18,7 @@ ADALO_APP_ID = "105b8ea3-f2e9-498e-b939-03d445237d78"
 ADALO_COLLECTION_ID = "t_e11t5tqgg6jbkbq4a1z596kqt"
 
 # API kulcs beállítása: először környezeti változóból, ha nincs, akkor közvetlenül a kódban
-ADALO_API_KEY = os.getenv("ADALO_API_KEY")
+ADALO_API_KEY = os.getenv("ADALO_API_KEY","2f7hg3qfd2fctfrf3argfal9d")
 
 # Saját API kulcs az autentikációhoz (eltávolítva)
 # API_KEY = os.getenv("SERVICE_API_KEY")
@@ -325,6 +325,7 @@ async def download_partner_transactions(
                 "discount_value",
                 "saved_value",
                 "hunicoin_value",
+                "jutalek_value",
                 "updated_at"
             ]
             # Ellenőrizzük, hogy a kívánt oszlopok léteznek-e a DataFrame-ben
@@ -343,6 +344,7 @@ async def download_partner_transactions(
                 "discount_value": "Kedvezmény %",
                 "saved_value": "Spórolás",
                 "hunicoin_value": "Hunicoinok száma",
+                "jutalek_value": "Jutalék összege",
                 "updated_at": "Tranzakció dátuma"
             }
             # Csak a kiválasztott oszlopoknak megfelelő mapping használata
