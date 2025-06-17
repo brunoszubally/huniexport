@@ -681,6 +681,14 @@ async def test_users():
         print(f"\nVáratlan hiba részletei: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
+# Egyszerű ping végpont a cron job-okhoz
+@app.get("/ping")
+async def ping():
+    """
+    Egyszerű ping végpont a cron job-okhoz és health check-hez
+    """
+    return {"status": "ok", "message": "pong", "timestamp": datetime.now(timezone.utc).isoformat()}
+
 if __name__ == "__main__":
     import uvicorn
     # Ezt a blokkot csak lokális fejlesztéshez használjuk.
