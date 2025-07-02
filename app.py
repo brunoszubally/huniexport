@@ -50,11 +50,11 @@ class GetTransactionsRequest(BaseModel):
     # Adalo custom function-ök gyakran küldenek más adatokat is, 
     # ha kellenek, itt add hozzá őket (pl. other_data: Any)
 
-@app.api_route("/notifalse", methods=["POST", "GET"])
-async def notifalse(request: Request):
-    print("Adalo request body:", await request.body())
+@app.get("/notifalse")
+async def notifalse():
     """
     Lekéri az összes usert, és mindegyiknél a latestnotivisited mezőt false-ra állítja (PUT-tal, csak Adalo által elvárt mezőkkel és alapértelmezett értékekkel).
+    GET kérésre is működik, így elég csak betölteni az URL-t.
     """
     app_id = ADALO_USERS_APP_ID
     collection_id = ADALO_USERS_COLLECTION_ID
@@ -66,7 +66,6 @@ async def notifalse(request: Request):
         "Content-Type": "application/json"
     }
 
-    # Csak ezek a mezők lesznek visszaküldve (Adalo API által elvárt mezők)
     allowed_fields = [
         "Email", "valami", "Full Name", "Transactions (jouser_transact)s", "level_name", "liked_coupons",
         "unlocked_coupons", "registration_date", "latesthunicoinlogin", "wantsto_delete", "verified_time",
@@ -74,8 +73,6 @@ async def notifalse(request: Request):
         "nickname", "gender", "latestnotivisited", "liked_partners", "hunidate", "disliked_categories",
         "liked_categories", "level_url", "Admin?"
     ]
-
-    # Alapértelmezett értékek a mezőkhöz (típus szerint)
     default_values = {
         "Email": "",
         "valami": "",
@@ -104,7 +101,6 @@ async def notifalse(request: Request):
         "Admin?": False
     }
 
-    # 1. Lekérjük az összes usert (ha sok van, csak az első 1000-et, vagy paginálunk)
     response = requests.get(users_url, headers=headers)
     if response.status_code != 200:
         raise HTTPException(status_code=response.status_code, detail=f"Adalo API hiba: {response.text}")
@@ -117,14 +113,12 @@ async def notifalse(request: Request):
         user_id = user.get("id")
         if user_id is None:
             continue
-        # Lekérjük a teljes rekordot
         get_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{user_id}"
         get_resp = requests.get(get_url, headers=headers)
         if get_resp.status_code != 200:
             errors.append({"user_id": user_id, "status": get_resp.status_code, "body": get_resp.text, "step": "get"})
             continue
         full_record = get_resp.json()
-        # Csak az allowed_fields mezőket tartjuk meg, alapértelmezett értékekkel
         filtered_record = {}
         for k in allowed_fields:
             v = full_record.get(k, None)
@@ -133,7 +127,6 @@ async def notifalse(request: Request):
             else:
                 filtered_record[k] = v
         filtered_record["latestnotivisited"] = False
-        # PUT-tal visszaküldjük
         put_url = get_url
         put_resp = requests.put(put_url, headers=headers, json=filtered_record)
         if put_resp.status_code in [200, 201]:
