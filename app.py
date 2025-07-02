@@ -50,7 +50,7 @@ class GetTransactionsRequest(BaseModel):
     # Adalo custom function-ök gyakran küldenek más adatokat is, 
     # ha kellenek, itt add hozzá őket (pl. other_data: Any)
 
-@app.post("/notifalse")
+@app.api_route("/notifalse", methods=["POST", "GET"])
 async def notifalse(request: Request):
     print("Adalo request body:", await request.body())
     """
