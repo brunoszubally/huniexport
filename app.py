@@ -11,23 +11,23 @@ from pydantic import BaseModel
 # Környezeti változók betöltése
 load_dotenv()
 
+# --- ADALO KONFIGURÁCIÓK (csak itt, mindenhol ezekre hivatkozunk) ---
+# Users (felhasználók) collection
+ADALO_USERS_APP_ID = os.getenv("ADALO_USERS_APP_ID")
+ADALO_USERS_COLLECTION_ID = os.getenv("ADALO_USERS_COLLECTION_ID")
+
+# Transactions (tranzakciók) collection
+ADALO_TRANSACTIONS_APP_ID = os.getenv("ADALO_TRANSACTIONS_APP_ID")
+ADALO_TRANSACTIONS_COLLECTION_ID = os.getenv("ADALO_TRANSACTIONS_COLLECTION_ID")
+
+# Statisztika collection
+ADALO_STATS_APP_ID = os.getenv("ADALO_STATS_APP_ID")
+ADALO_STATS_COLLECTION_ID = os.getenv("ADALO_STATS_COLLECTION_ID")
+
+# Fő API kulcs (mindenhez ugyanaz, ha nincs külön)
+ADALO_API_KEY = os.getenv("ADALO_API_KEY")
+
 app = FastAPI(title="Huniexport API")
-
-# Adalo API konfiguráció
-ADALO_APP_ID = "105b8ea3-f2e9-498e-b939-03d445237d78"
-ADALO_COLLECTION_ID = "t_e11t5tqgg6jbkbq4a1z596kqt"
-
-# API kulcs beállítása: először környezeti változóból, ha nincs, akkor közvetlenül a kódban
-ADALO_API_KEY = os.getenv("ADALO_API_KEY","2f7hg3qfd2fctfrf3argfal9d")
-
-# Saját API kulcs az autentikációhoz (eltávolítva)
-# API_KEY = os.getenv("SERVICE_API_KEY")
-# api_key_header = APIKeyHeader(name="X-API-Key")
-
-# def get_api_key(api_key: str = Depends(api_key_header)):
-#     if api_key != API_KEY:
-#         raise HTTPException(status_code=401, detail="Érvénytelen API kulcs")
-#     return api_key
 
 class Transaction(BaseModel):
     id: int
@@ -50,12 +50,104 @@ class GetTransactionsRequest(BaseModel):
     # Adalo custom function-ök gyakran küldenek más adatokat is, 
     # ha kellenek, itt add hozzá őket (pl. other_data: Any)
 
+@app.post("/notifalse")
+async def notifalse():
+    """
+    Lekéri az összes usert, és mindegyiknél a latestnotivisited mezőt false-ra állítja (PUT-tal, csak Adalo által elvárt mezőkkel és alapértelmezett értékekkel).
+    """
+    app_id = ADALO_USERS_APP_ID
+    collection_id = ADALO_USERS_COLLECTION_ID
+    api_key = ADALO_API_KEY
+
+    users_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    # Csak ezek a mezők lesznek visszaküldve (Adalo API által elvárt mezők)
+    allowed_fields = [
+        "Email", "valami", "Full Name", "Transactions (jouser_transact)s", "level_name", "liked_coupons",
+        "unlocked_coupons", "registration_date", "latesthunicoinlogin", "wantsto_delete", "verified_time",
+        "student_verified", "current_card", "transactions_user", "total_hunicoins", "diakigazolvany_azonosito",
+        "nickname", "gender", "latestnotivisited", "liked_partners", "hunidate", "disliked_categories",
+        "liked_categories", "level_url", "Admin?"
+    ]
+
+    # Alapértelmezett értékek a mezőkhöz (típus szerint)
+    default_values = {
+        "Email": "",
+        "valami": "",
+        "Full Name": "",
+        "Transactions (jouser_transact)s": [],
+        "level_name": "",
+        "liked_coupons": [],
+        "unlocked_coupons": [],
+        "registration_date": "",
+        "latesthunicoinlogin": "",
+        "wantsto_delete": "",
+        "verified_time": "",
+        "student_verified": False,
+        "current_card": [],
+        "transactions_user": [],
+        "total_hunicoins": 0,
+        "diakigazolvany_azonosito": 0,
+        "nickname": "",
+        "gender": "",
+        "latestnotivisited": False,
+        "liked_partners": [],
+        "hunidate": "",
+        "disliked_categories": [],
+        "liked_categories": [],
+        "level_url": "",
+        "Admin?": False
+    }
+
+    # 1. Lekérjük az összes usert (ha sok van, csak az első 1000-et, vagy paginálunk)
+    response = requests.get(users_url, headers=headers)
+    if response.status_code != 200:
+        raise HTTPException(status_code=response.status_code, detail=f"Adalo API hiba: {response.text}")
+    data = response.json()
+    users = data.get("records", [])
+
+    updated = 0
+    errors = []
+    for user in users:
+        user_id = user.get("id")
+        if user_id is None:
+            continue
+        # Lekérjük a teljes rekordot
+        get_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{user_id}"
+        get_resp = requests.get(get_url, headers=headers)
+        if get_resp.status_code != 200:
+            errors.append({"user_id": user_id, "status": get_resp.status_code, "body": get_resp.text, "step": "get"})
+            continue
+        full_record = get_resp.json()
+        # Csak az allowed_fields mezőket tartjuk meg, alapértelmezett értékekkel
+        filtered_record = {}
+        for k in allowed_fields:
+            v = full_record.get(k, None)
+            if v is None:
+                filtered_record[k] = default_values[k]
+            else:
+                filtered_record[k] = v
+        filtered_record["latestnotivisited"] = False
+        # PUT-tal visszaküldjük
+        put_url = get_url
+        put_resp = requests.put(put_url, headers=headers, json=filtered_record)
+        if put_resp.status_code in [200, 201]:
+            updated += 1
+        else:
+            errors.append({"user_id": user_id, "status": put_resp.status_code, "body": put_resp.text, "step": "put", "sent": filtered_record})
+
+    return {
+        "updated_users": updated,
+        "errors": errors,
+        "total_users": len(users)
+    }
 
 @app.post("/get-partner-transactions")
-async def get_partner_transactions(
-    request_data: GetTransactionsRequest
-    # api_key: str = Depends(get_api_key) # Autentikáció eltávolítva
-):
+async def get_partner_transactions(request_data: GetTransactionsRequest):
     """
     Lekéri egy partner összes 'finalized' tranzakcióját és JSON-ként visszaadja (nincs API kulcs védelem)
     Ez a végpont Adalo custom function-ök számára készült.
@@ -68,7 +160,7 @@ async def get_partner_transactions(
     print(f"\n=== Új kérés kezdése partner_id={partner_id} ===")
     
     # Adalo API hívás
-    url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/{ADALO_COLLECTION_ID}"
+    url = f"https://api.adalo.com/v0/apps/{ADALO_TRANSACTIONS_APP_ID}/collections/{ADALO_TRANSACTIONS_COLLECTION_ID}"
     headers = {
         "Authorization": f"Bearer {ADALO_API_KEY}",
         "Content-Type": "application/json"
@@ -162,7 +254,6 @@ async def get_partner_transactions(
          print(f"Váratlan hiba történt: {str(e)}")
          raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
-# Új végpont az Excel letöltéshez (közvetlen híváshoz Adaloból vagy böngészőből)
 @app.get("/download-transactions/{partner_id}")
 async def download_partner_transactions(
     partner_id: int,
@@ -181,7 +272,7 @@ async def download_partner_transactions(
     print(f"\n=== Új Excel letöltési kérés kezdése partner_id={partner_id} ===")
     
     # Adalo API hívás
-    url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/{ADALO_COLLECTION_ID}"
+    url = f"https://api.adalo.com/v0/apps/{ADALO_TRANSACTIONS_APP_ID}/collections/{ADALO_TRANSACTIONS_COLLECTION_ID}"
     headers = {
         "Authorization": f"Bearer {ADALO_API_KEY}",
         "Content-Type": "application/json"
@@ -405,7 +496,6 @@ async def download_partner_transactions(
          print(f"Váratlan hiba történt (Excel végpont): {str(e)}")
          raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba (Excel végpont): {str(e)}")
 
-# Új végpont a felhasználók Excel letöltéséhez
 @app.get("/download-users")
 async def download_users(
     background_tasks: BackgroundTasks,
@@ -422,7 +512,7 @@ async def download_users(
     print("\n=== Új felhasználó Excel letöltési kérés kezdése ===")
     
     # Adalo Users API hívás
-    url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/users"
+    url = f"https://api.adalo.com/v0/apps/{ADALO_USERS_APP_ID}/users"
     headers = {
         "Authorization": f"Bearer {ADALO_API_KEY}",
         "Content-Type": "application/json"
@@ -586,7 +676,6 @@ async def download_users(
         print(f"Váratlan hiba történt: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
-# Teszt végpont az Adalo API válasz megjelenítéséhez
 @app.get("/test-users")
 async def test_users():
     """
@@ -598,7 +687,7 @@ async def test_users():
     print("\n=== Felhasználók számának lekérdezése és statisztika létrehozása ===")
     
     # Adalo Users API hívás
-    users_url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/t_0013b9f2134b4b79b0820993b01145d4"
+    users_url = f"https://api.adalo.com/v0/apps/{ADALO_USERS_APP_ID}/collections/{ADALO_USERS_COLLECTION_ID}"
     headers = {
         "Authorization": f"Bearer {ADALO_API_KEY}",
         "Content-Type": "application/json"
@@ -629,7 +718,7 @@ async def test_users():
             total_users = len(users)
             
             # Új statisztika rekord létrehozása
-            stats_url = f"https://api.adalo.com/v0/apps/{ADALO_APP_ID}/collections/t_ashzitr0lvm0u1dibo7jada75"
+            stats_url = f"https://api.adalo.com/v0/apps/{ADALO_STATS_APP_ID}/collections/{ADALO_STATS_COLLECTION_ID}"
             
             # Új rekord adatai - módosítva a dátum formátum
             new_record = {
@@ -681,7 +770,6 @@ async def test_users():
         print(f"\nVáratlan hiba részletei: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
-# Egyszerű ping végpont a cron job-okhoz
 @app.get("/ping")
 async def ping():
     """
