@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Request
 from fastapi.responses import JSONResponse, FileResponse
 import pandas as pd
 import requests
@@ -51,7 +51,8 @@ class GetTransactionsRequest(BaseModel):
     # ha kellenek, itt add hozzá őket (pl. other_data: Any)
 
 @app.post("/notifalse")
-async def notifalse():
+async def notifalse(request: Request):
+    print("Adalo request body:", await request.body())
     """
     Lekéri az összes usert, és mindegyiknél a latestnotivisited mezőt false-ra állítja (PUT-tal, csak Adalo által elvárt mezőkkel és alapértelmezett értékekkel).
     """
