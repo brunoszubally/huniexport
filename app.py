@@ -784,18 +784,15 @@ async def download_users_collection(
             column_mapping = {
                 "id": "Felhasználó azonosító",
                 "Email": "Email cím",
+                "subscribedtonews": "Hírlevél feliratkozás",
                 "Full Name": "Teljes név",
                 "nickname": "Becenév",
                 "registration_date": "Regisztráció dátuma",
-                "created_at": "Létrehozás dátuma",
-                "updated_at": "Utolsó módosítás dátuma",
                 "student_verified": "Diákigazolvány ellenőrizve",
                 "verified_time": "Ellenőrzés dátuma",
                 "diakigazolvany_azonosito": "Diákigazolvány azonosító",
                 "total_hunicoins": "Hunicoinok száma",
-                "latesthunicoinlogin": "Utolsó hunicoin bejelentkezés",
                 "gender": "Nem",
-                "gender_url": "Nem ikon URL",
                 "level_name": "Szint neve",
                 "level_url": "Szint URL",
                 "hunidate": "Huni dátum",
@@ -803,11 +800,8 @@ async def download_users_collection(
                 "disliked_categories": "Nem kedvelt kategóriák",
                 "liked_partners": "Kedvelt partnerek",
                 "transactions_user": "Felhasználó tranzakciói",
-                "Transactions (jouser_transact)s": "Jouser tranzakciók",
                 "opened_noticoupon": "Megnyitott értesítési kuponok",
-                "subscribedtonews": "Hírlevél feliratkozás",
                 "Admin?": "Admin",
-                "valami": "Egyéb adat",
                 "wantsto_delete": "Törölni akar",
                 "latestnotivisited": "Utolsó értesítés látogatás"
             }
@@ -820,7 +814,7 @@ async def download_users_collection(
             df = df.rename(columns={old: new for old, new in column_mapping.items() if old in df.columns})
             
             # Dátum formázás
-            date_columns = ["Regisztráció dátuma", "Létrehozás dátuma", "Utolsó módosítás dátuma", "Ellenőrzés dátuma", "Utolsó hunicoin bejelentkezés", "Huni dátum"]
+            date_columns = ["Regisztráció dátuma", "Ellenőrzés dátuma", "Huni dátum"]
             for date_col in date_columns:
                 if date_col in df.columns:
                     try:
