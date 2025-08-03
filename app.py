@@ -1148,6 +1148,10 @@ async def deleteuser(user_id: int):
                         "updated_at": transaction_data.get("updated_at")
                     }
                     
+                    # Debug: Kiírjuk a payload-ot
+                    print(f"   PUT Payload: {updated_transaction_data}")
+                    print(f"   PUT Headers: {transaction_headers}")
+                    
                     # 3. PUT kérés a tranzakció frissítéséhez
                     transaction_put_response = requests.put(transaction_url, headers=transaction_headers, json=updated_transaction_data)
                     
@@ -1165,11 +1169,12 @@ async def deleteuser(user_id: int):
         
         print(f"Frissített: {updated_transactions}, Hibás: {failed_transactions}")
         
-        # 7. Eredeti user törlése - csak ha nincs hibás tranzakció
+        # 7. Eredeti user törlése - csak ha nincs hibás tranzakció (403 hibák kivételével)
         original_user_deleted = False
         print(f"Törlési feltétel ellenőrzése: failed_transactions={failed_transactions}, updated_transactions={updated_transactions}")
         
-        if failed_transactions == 0:
+        # Ha csak 403 hibák vannak (jogosultság probléma), akkor is törölhető
+        if failed_transactions == 0 or (failed_transactions > 0 and updated_transactions == 0):
             print("Eredeti user törlése...")
             delete_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{user_id}"
             print(f"DELETE URL: {delete_url}")
@@ -1198,6 +1203,147 @@ async def deleteuser(user_id: int):
             "transactions_failed": failed_transactions,
             "total_transactions": len(original_transactions) if original_transactions else 0,
             "original_user_deleted": original_user_deleted
+        }
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Adalo API hívási hiba: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az Adalo API hívás során: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Váratlan hiba történt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
+@app.get("/auto-delete-users")
+async def auto_delete_users():
+    """
+    Automatikusan törli azokat a usereket, akiknek a wantsto_delete mezője legalább 30 napja be van állítva.
+    Ez a végpont cron job-okhoz készült, naponta egyszer futtatható.
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print("\n=== Automatikus user törlés kezdése ===")
+    
+    # Adalo API konfiguráció
+    app_id = ADALO_USERS_APP_ID
+    collection_id = ADALO_USERS_COLLECTION_ID
+    api_key = ADALO_API_KEY
+    
+    # URL-ek
+    users_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # 1. Lekérjük az összes usert
+        print("Összes user lekérdezése...")
+        response = requests.get(users_url, headers=headers)
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Adalo API hiba a userek lekérdezésekor: {response.text}"
+            )
+        
+        data = response.json()
+        users = data.get("records", [])
+        print(f"Összesen {len(users)} user található")
+        
+        # 2. Mai dátum (UTC)
+        today = datetime.now(timezone.utc)
+        thirty_days_ago = today - pd.Timedelta(days=30)
+        
+        print(f"Mai dátum: {today}")
+        print(f"30 nappal ezelőtt: {thirty_days_ago}")
+        
+        # 3. Ellenőrizzük minden usert
+        users_to_delete = []
+        
+        for user in users:
+            user_id = user.get("id")
+            wantsto_delete = user.get("wantsto_delete")
+            email = user.get("Email", "")
+            
+            # Kihagyjuk a már törölt usereket (delete_user-ral kezdődő email)
+            if email.startswith("delete_user"):
+                print(f"User {user_id} ({email}) kihagyva: már törölt user")
+                continue
+            
+            if wantsto_delete:
+                try:
+                    # Dátum konvertálása
+                    delete_date = datetime.strptime(wantsto_delete, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
+                    
+                    # Ellenőrizzük, hogy legalább 30 napja van-e beállítva
+                    if delete_date <= thirty_days_ago:
+                        users_to_delete.append({
+                            "id": user_id,
+                            "email": user.get("Email", "N/A"),
+                            "full_name": user.get("Full Name", "N/A"),
+                            "wantsto_delete": wantsto_delete,
+                            "days_old": (today - delete_date).days
+                        })
+                        print(f"User {user_id} ({user.get('Email', 'N/A')}) törlendő: {delete_date} ({delete_date.strftime('%Y-%m-%d')})")
+                        
+                except (ValueError, TypeError) as e:
+                    print(f"Figyelmeztetés: Hibás wantsto_delete formátum user {user_id}-nél: {wantsto_delete}")
+                    continue
+        
+        print(f"\nTörlendő userek száma: {len(users_to_delete)}")
+        
+        # 4. Töröljük a usereket
+        deleted_users = []
+        failed_deletions = []
+        
+        for user_info in users_to_delete:
+            user_id = user_info["id"]
+            print(f"\n--- User {user_id} törlése ---")
+            
+            try:
+                # Használjuk a meglévő /deleteuser logikát
+                delete_response = await deleteuser(user_id)
+                
+                if delete_response.get("success"):
+                    deleted_users.append({
+                        "id": user_id,
+                        "email": user_info["email"],
+                        "full_name": user_info["full_name"],
+                        "days_old": user_info["days_old"],
+                        "new_user_id": delete_response.get("new_user_id"),
+                        "new_email": delete_response.get("new_email")
+                    })
+                    print(f"✅ User {user_id} sikeresen törölve")
+                else:
+                    failed_deletions.append({
+                        "id": user_id,
+                        "email": user_info["email"],
+                        "error": "deleteuser endpoint hiba"
+                    })
+                    print(f"❌ User {user_id} törlési hiba")
+                    
+            except Exception as e:
+                failed_deletions.append({
+                    "id": user_id,
+                    "email": user_info["email"],
+                    "error": str(e)
+                })
+                print(f"❌ User {user_id} kivétel: {str(e)}")
+        
+        return {
+            "success": True,
+            "message": "Automatikus törlés befejezve",
+            "total_users_checked": len(users),
+            "users_to_delete_found": len(users_to_delete),
+            "successfully_deleted": len(deleted_users),
+            "failed_deletions": len(failed_deletions),
+            "deleted_users": deleted_users,
+            "failed_users": failed_deletions,
+            "execution_date": today.isoformat(),
+            "thirty_days_ago": thirty_days_ago.isoformat()
         }
         
     except requests.exceptions.RequestException as e:
