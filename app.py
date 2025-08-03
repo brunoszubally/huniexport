@@ -53,6 +53,16 @@ class GetTransactionsRequest(BaseModel):
     # Adalo custom function-ök gyakran küldenek más adatokat is, 
     # ha kellenek, itt add hozzá őket (pl. other_data: Any)
 
+class SendMailsRequest(BaseModel):
+    template_id: str
+    subject: str
+    from_email: str = "info@nextfoto.hu"
+    from_name: str = "Huniversity"
+    # Opcionális personalization adatok
+    personalization_data: Optional[dict] = None
+    # Opcionális user lista (ha nincs megadva, akkor az összes user)
+    user_emails: Optional[List[str]] = None
+
 @app.get("/notifalse")
 async def notifalse():
     """
@@ -1351,6 +1361,210 @@ async def auto_delete_users():
         raise HTTPException(
             status_code=500,
             detail=f"Hiba az Adalo API hívás során: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Váratlan hiba történt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
+@app.post("/sendmails")
+async def sendmails(request_data: SendMailsRequest):
+    """
+    MailerSend bulk email API-val küld emailt az összes usernek.
+    Adalo custom action-ból hívható meg JSON paraméterekkel.
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print(f"\n=== Bulk email küldés kezdése ===")
+    print(f"Template ID: {request_data.template_id}")
+    print(f"Subject: {request_data.subject}")
+    
+    # MailerSend API konfiguráció
+    MAILERSEND_API_KEY = "mlsn.f16b8868e4730cd3c9f9f5319e2b20c7627b8548541ba811c7a77c9281ce0d2c"
+    MAILERSEND_BULK_URL = "https://api.mailersend.com/v1/bulk-email"
+    
+    mailersend_headers = {
+        "Content-Type": "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+        "Authorization": f"Bearer {MAILERSEND_API_KEY}"
+    }
+    
+    try:
+        # 1. Lekérjük az összes usert az Adalo Collection API-ból (mint a /download-users-collection)
+        print("Userek lekérdezése az Adalo Collection API-ból...")
+        app_id = ADALO_USERS_APP_ID
+        collection_id = ADALO_USERS_COLLECTION_ID
+        api_key = ADALO_API_KEY
+        
+        users_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}"
+        adalo_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        response = requests.get(users_url, headers=adalo_headers)
+        
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Adalo API hiba a userek lekérdezésekor: {response.text}"
+            )
+        
+        data = response.json()
+        users = data.get("records", [])
+        print(f"Összesen {len(users)} user található az Adalo Collection API-ból")
+        
+        # 2. Készítsük el a recipient listát
+        valid_users = []
+        
+        if request_data.user_emails:
+            # Ha saját email lista van megadva
+            print(f"Saját email lista használata: {len(request_data.user_emails)} email")
+            for email in request_data.user_emails:
+                if email and not email.startswith("delete_user"):
+                    valid_users.append({
+                        "email": email,
+                        "full_name": "",  # Nincs full name a saját listában
+                        "user_id": None
+                    })
+        else:
+            # Ha nincs saját lista, akkor az összes user az Adalo Collection API-ból
+            print("Összes user használata az Adalo Collection API-ból")
+            for user in users:
+                email = user.get("Email", "")
+                wantsto_delete = user.get("wantsto_delete")
+                
+                # Kihagyjuk a törölt usereket és azokat, akik törölni akarnak
+                if (email and 
+                    not email.startswith("delete_user") and 
+                    not wantsto_delete):  # Csak azok, akik NEM akarnak törölni
+                    
+                    valid_users.append({
+                        "email": email,
+                        "full_name": user.get("Full Name", ""),
+                        "user_id": user.get("id")
+                    })
+                    print(f"User {user.get('id')} ({email}) hozzáadva")
+                else:
+                    if email.startswith("delete_user"):
+                        print(f"User {user.get('id')} ({email}) kihagyva: már törölt")
+                    elif wantsto_delete:
+                        print(f"User {user.get('id')} ({email}) kihagyva: törölni akar")
+                    else:
+                        print(f"User {user.get('id')} ({email}) kihagyva: nincs email")
+        
+        print(f"Érvényes userek száma: {len(valid_users)}")
+        
+        if not valid_users:
+            return {
+                "success": False,
+                "message": "Nincs érvényes user email cím",
+                "total_users": len(users) if not request_data.user_emails else len(request_data.user_emails),
+                "valid_users": 0
+            }
+        
+        # 3. Készítsük el a MailerSend bulk email payload-ot
+        # MailerSend bulk endpoint: max 500 email objektum, mindegyik max 50 TO recipient
+        # Ha több mint 500 user van, több batch-re kell bontani
+        
+        batch_size = 500
+        total_batches = (len(valid_users) + batch_size - 1) // batch_size
+        
+        print(f"Batch-ek száma: {total_batches}")
+        
+        all_bulk_responses = []
+        
+        for batch_num in range(total_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, len(valid_users))
+            batch_users = valid_users[start_idx:end_idx]
+            
+            print(f"Batch {batch_num + 1}/{total_batches}: {len(batch_users)} user")
+            
+            # Készítsük el a bulk email objektumokat
+            bulk_emails = []
+            
+            for user in batch_users:
+                email_obj = {
+                    "from": {
+                        "email": request_data.from_email,
+                        "name": request_data.from_name
+                    },
+                    "to": [
+                        {
+                            "email": user["email"],
+                            "name": user["full_name"] if user["full_name"] else None
+                        }
+                    ],
+                    "subject": request_data.subject,
+                    "template_id": request_data.template_id
+                }
+                
+                # Personalization hozzáadása, ha van
+                if request_data.personalization_data:
+                    email_obj["personalization"] = [
+                        {
+                            "email": user["email"],
+                            "data": request_data.personalization_data
+                        }
+                    ]
+                
+                bulk_emails.append(email_obj)
+            
+            # MailerSend bulk API hívás
+            print(f"MailerSend bulk API hívás batch {batch_num + 1}...")
+            
+            bulk_payload = bulk_emails
+            
+            bulk_response = requests.post(
+                MAILERSEND_BULK_URL,
+                headers=mailersend_headers,
+                json=bulk_payload
+            )
+            
+            print(f"MailerSend válasz státuszkód: {bulk_response.status_code}")
+            
+            if bulk_response.status_code in [200, 201, 202]:
+                bulk_data = bulk_response.json()
+                all_bulk_responses.append({
+                    "batch_num": batch_num + 1,
+                    "status": "success",
+                    "bulk_email_id": bulk_data.get("id"),
+                    "users_count": len(batch_users)
+                })
+                print(f"✅ Batch {batch_num + 1} sikeresen elküldve")
+            else:
+                error_detail = f"MailerSend API hiba batch {batch_num + 1}: {bulk_response.status_code} - {bulk_response.text}"
+                print(f"❌ {error_detail}")
+                all_bulk_responses.append({
+                    "batch_num": batch_num + 1,
+                    "status": "error",
+                    "error": error_detail,
+                    "users_count": len(batch_users)
+                })
+        
+        # 4. Összesítés
+        successful_batches = sum(1 for resp in all_bulk_responses if resp["status"] == "success")
+        failed_batches = len(all_bulk_responses) - successful_batches
+        
+        return {
+            "success": True,
+            "message": "Bulk email küldés befejezve",
+            "total_users": len(users),
+            "valid_users": len(valid_users),
+            "total_batches": total_batches,
+            "successful_batches": successful_batches,
+            "failed_batches": failed_batches,
+            "batch_responses": all_bulk_responses,
+            "template_id": request_data.template_id,
+            "subject": request_data.subject
+        }
+        
+    except requests.exceptions.RequestException as e:
+        print(f"API hívási hiba: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az API hívás során: {str(e)}"
         )
     except Exception as e:
         print(f"Váratlan hiba történt: {str(e)}")
