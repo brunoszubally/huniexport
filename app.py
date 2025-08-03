@@ -13,19 +13,22 @@ load_dotenv()
 
 # --- ADALO KONFIGURÁCIÓK (csak itt, mindenhol ezekre hivatkozunk) ---
 # Users (felhasználók) collection
-ADALO_USERS_APP_ID = os.getenv("ADALO_USERS_APP_ID")
-ADALO_USERS_COLLECTION_ID = os.getenv("ADALO_USERS_COLLECTION_ID")
+ADALO_USERS_APP_ID = os.getenv("ADALO_USERS_APP_ID", "78abf0f7-0d48-492e-98b5-ee301ebe700e")
+ADALO_USERS_COLLECTION_ID = os.getenv("ADALO_USERS_COLLECTION_ID", "t_0013b9f2134b4b79b0820993b01145d4")
 
 # Transactions (tranzakciók) collection
-ADALO_TRANSACTIONS_APP_ID = os.getenv("ADALO_TRANSACTIONS_APP_ID")
-ADALO_TRANSACTIONS_COLLECTION_ID = os.getenv("ADALO_TRANSACTIONS_COLLECTION_ID")
+ADALO_TRANSACTIONS_APP_ID = os.getenv("ADALO_TRANSACTIONS_APP_ID", "105b8ea3-f2e9-498e-b939-03d445237d78")
+ADALO_TRANSACTIONS_COLLECTION_ID = os.getenv("ADALO_TRANSACTIONS_COLLECTION_ID", "t_e11t5tqgg6jbkbq4a1z596kqt")
 
 # Statisztika collection
-ADALO_STATS_APP_ID = os.getenv("ADALO_STATS_APP_ID")
-ADALO_STATS_COLLECTION_ID = os.getenv("ADALO_STATS_COLLECTION_ID")
+ADALO_STATS_APP_ID = os.getenv("ADALO_STATS_APP_ID", "105b8ea3-f2e9-498e-b939-03d445237d78")
+ADALO_STATS_COLLECTION_ID = os.getenv("ADALO_STATS_COLLECTION_ID", "t_ashzitr0lvm0u1dibo7jada75")
 
 # Fő API kulcs (mindenhez ugyanaz, ha nincs külön)
-ADALO_API_KEY = os.getenv("ADALO_API_KEY")
+ADALO_API_KEY = os.getenv("ADALO_API_KEY", "2oq7qmxcjwa4m1tcqdf1w1e8i")
+
+# Transactions API kulcs (külön, mert a tranzakciók másik app-ban vannak)
+ADALO_TRANSACTIONS_API_KEY = os.getenv("ADALO_TRANSACTIONS_API_KEY", "2f7hg3qfd2fctfrf3argfal9d")
 
 app = FastAPI(title="Huniexport API")
 
@@ -957,6 +960,256 @@ async def test_users():
         print(f"\nVáratlan hiba részletei: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
 
+@app.get("/deleteuser/{user_id}")
+async def deleteuser(user_id: int):
+    """
+    Lemásolja a felhasználót egy új rekordba, de módosítja az email-t és a full name-t.
+    Az eredeti user_id alapján működik.
+    """
+    if not ADALO_API_KEY:
+        raise HTTPException(status_code=500, detail="Adalo API kulcs nincs beállítva (ADALO_API_KEY környezeti változó)")
+
+    print(f"\n=== Felhasználó másolása user_id={user_id} ===")
+    
+    # Adalo API konfiguráció
+    app_id = ADALO_USERS_APP_ID
+    collection_id = ADALO_USERS_COLLECTION_ID
+    api_key = ADALO_API_KEY
+    
+    # URL-ek
+    get_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{user_id}"
+    create_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}"
+    
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # 1. Lekérjük az eredeti felhasználót
+        print(f"Eredeti felhasználó lekérdezése: {get_url}")
+        get_response = requests.get(get_url, headers=headers)
+        
+        if get_response.status_code != 200:
+            raise HTTPException(
+                status_code=get_response.status_code,
+                detail=f"Adalo API hiba a felhasználó lekérdezésekor: {get_response.text}"
+            )
+        
+        original_user = get_response.json()
+        print(f"Eredeti felhasználó sikeresen lekérdezve")
+        
+        # 2. Generálunk egyedi azonosítót
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # milliszekundumok nélkül
+        unique_id = f"delete_user_{timestamp}"
+        
+        # 3. Létrehozzuk az új rekordot csak az alapvető adatokkal (tömbök nélkül)
+        basic_user_data = {
+            "Email": f"delete_user_{timestamp}@deleted.com",
+            "Full Name": f"Deleted User {timestamp}",
+            "valami": original_user.get("valami", ""),
+            "registration_date": original_user.get("registration_date", ""),
+            "diakigazolvany_azonosito": original_user.get("diakigazolvany_azonosito", 0),
+            "student_verified": original_user.get("student_verified", False),
+            "verified_time": original_user.get("verified_time", ""),
+            "nickname": original_user.get("nickname", ""),
+            "latesthunicoinlogin": original_user.get("latesthunicoinlogin", ""),
+            "total_hunicoins": original_user.get("total_hunicoins", 0),
+            "users_partner": original_user.get("users_partner", None),
+            "wantsto_delete": original_user.get("wantsto_delete", None),
+            "level_url": original_user.get("level_url", ""),
+            "level_name": original_user.get("level_name", ""),
+            "hunidate": original_user.get("hunidate", ""),
+            "gender": original_user.get("gender", ""),
+            "gender_url": original_user.get("gender_url", ""),
+            "subscribedtonews": original_user.get("subscribedtonews", False),
+            "deleted_date": original_user.get("deleted_date", None),
+            "mindentelfogad": original_user.get("mindentelfogad", False),
+            "aszf_toggle": original_user.get("aszf_toggle", False),
+            "gdpr_toggle": original_user.get("gdpr_toggle", False),
+            "szemelyre_toggle": original_user.get("szemelyre_toggle", False),
+            "suti_toggle": original_user.get("suti_toggle", False),
+            "Admin?": original_user.get("Admin?", False)
+        }
+        
+        print(f"Új felhasználó alapvető adatok létrehozása...")
+        print(f"Email: {basic_user_data['Email']}")
+        print(f"Full Name: {basic_user_data['Full Name']}")
+        
+        # 4. POST kérés az új rekord létrehozásához (csak alapvető adatokkal)
+        create_response = requests.post(create_url, headers=headers, json=basic_user_data)
+        
+        print(f"Létrehozási válasz státuszkód: {create_response.status_code}")
+        print(f"Létrehozási válasz: {create_response.text}")
+        
+        if create_response.status_code not in [200, 201]:
+            raise HTTPException(
+                status_code=create_response.status_code,
+                detail=f"Adalo API hiba az új rekord létrehozásakor: {create_response.text}"
+            )
+        
+        created_user = create_response.json()
+        new_user_id = created_user.get('id')
+        
+        print(f"Új felhasználó létrehozva, ID: {new_user_id}")
+        
+        # 5. PUT kérés az összes mező frissítéséhez (transactions_user nélkül)
+        print("Összes mező frissítése PUT kéréssel...")
+        
+        # Összegyűjtjük az összes mezőt az eredeti user-ből (transactions_user nélkül)
+        complete_user_data = {
+            "Email": basic_user_data['Email'],
+            "valami": basic_user_data['valami'],
+            "Full Name": basic_user_data['Full Name'],
+            "Transactions (jouser_transact)s": original_user.get("Transactions (jouser_transact)s", []),
+            "level_name": basic_user_data['level_name'],
+            "liked_coupons": original_user.get("liked_coupons", []),
+            "unlocked_coupons": original_user.get("unlocked_coupons", []),
+            "registration_date": basic_user_data['registration_date'],
+            "mindentelfogad": basic_user_data['mindentelfogad'],
+            "latesthunicoinlogin": basic_user_data['latesthunicoinlogin'],
+            "wantsto_delete": basic_user_data['wantsto_delete'],
+            "deleted_date": basic_user_data['deleted_date'],
+            "verified_time": basic_user_data['verified_time'],
+            "student_verified": basic_user_data['student_verified'],
+            "current_card": original_user.get("current_card", []),
+            "total_hunicoins": basic_user_data['total_hunicoins'],
+            "gdpr_toggle": basic_user_data['gdpr_toggle'],
+            "diakigazolvany_azonosito": basic_user_data['diakigazolvany_azonosito'],
+            "nickname": basic_user_data['nickname'],
+            "gender": basic_user_data['gender'],
+            "subscribedtonews": basic_user_data['subscribedtonews'],
+            "liked_partners": original_user.get("liked_partners", []),
+            "hunidate": basic_user_data['hunidate'],
+            "disliked_categories": original_user.get("disliked_categories", []),
+            "szemelyre_toggle": basic_user_data['szemelyre_toggle'],
+            "opened_noticoupon": original_user.get("opened_noticoupon", []),
+            "aszf_toggle": basic_user_data['aszf_toggle'],
+            "liked_categories": original_user.get("liked_categories", []),
+            "level_url": basic_user_data['level_url'],
+            "gender_url": basic_user_data['gender_url'],
+            "suti_toggle": basic_user_data['suti_toggle'],
+            "Admin?": basic_user_data['Admin?']
+        }
+        
+        # PUT URL az új user-hez
+        put_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{new_user_id}"
+        
+        # PUT kérés az összes mező frissítéséhez
+        print(f"PUT kérés küldése: {put_url}")
+        put_response = requests.put(put_url, headers=headers, json=complete_user_data)
+        
+        print(f"PUT válasz státuszkód: {put_response.status_code}")
+        
+        if put_response.status_code not in [200, 201]:
+            print(f"Figyelmeztetés: A tömbök frissítése nem sikerült: {put_response.text}")
+        
+        # 6. Tranzakciók frissítése - manuális teszt alapján
+        print("Tranzakciók frissítése...")
+        
+        # Lekérjük az eredeti user tranzakcióit
+        original_transactions = original_user.get("transactions_user", [])
+        print(f"Eredeti user tranzakciói: {len(original_transactions)} db")
+        
+        updated_transactions = 0
+        failed_transactions = 0
+        
+        if original_transactions:
+            for transaction_id in original_transactions:
+                # Manuális teszt alapján: transactions app ID és API kulcs
+                transaction_url = f"https://api.adalo.com/v0/apps/{ADALO_TRANSACTIONS_APP_ID}/collections/{ADALO_TRANSACTIONS_COLLECTION_ID}/{transaction_id}"
+                transaction_headers = {
+                    "Authorization": f"Bearer {ADALO_TRANSACTIONS_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                
+                # 1. Lekérjük a tranzakciót
+                transaction_response = requests.get(transaction_url, headers=transaction_headers)
+                
+                if transaction_response.status_code == 200:
+                    transaction_data = transaction_response.json()
+                    
+                    # 2. Frissített tranzakció adatok - teljes payload, csak user_transaction változik
+                    updated_transaction_data = {
+                        "id": transaction_data.get("id"),
+                        "transaction_id": transaction_data.get("transaction_id"),
+                        "transaction_status": transaction_data.get("transaction_status"),
+                        "user_transaction": [new_user_id],  # Csak az új user ID
+                        "partner_transaction": transaction_data.get("partner_transaction", []),
+                        "coupon_transaction": transaction_data.get("coupon_transaction"),
+                        "spend_value": transaction_data.get("spend_value"),
+                        "discount_value": transaction_data.get("discount_value"),
+                        "saved_value": transaction_data.get("saved_value"),
+                        "hunicoin_value": transaction_data.get("hunicoin_value"),
+                        "jutalek_value": transaction_data.get("jutalek_value"),
+                        "jouser_transact": transaction_data.get("jouser_transact"),
+                        "test_user_transaction": transaction_data.get("test_user_transaction"),
+                        "created_at": transaction_data.get("created_at"),
+                        "updated_at": transaction_data.get("updated_at")
+                    }
+                    
+                    # 3. PUT kérés a tranzakció frissítéséhez
+                    transaction_put_response = requests.put(transaction_url, headers=transaction_headers, json=updated_transaction_data)
+                    
+                    if transaction_put_response.status_code in [200, 201]:
+                        updated_transactions += 1
+                        print(f"✅ Tranzakció {transaction_id} frissítve")
+                    else:
+                        failed_transactions += 1
+                        print(f"❌ Tranzakció {transaction_id} hiba: {transaction_put_response.status_code}")
+                else:
+                    failed_transactions += 1
+                    print(f"❌ Tranzakció {transaction_id} nem található: {transaction_response.status_code}")
+        else:
+            print("Nincs tranzakció az eredeti user-ben")
+        
+        print(f"Frissített: {updated_transactions}, Hibás: {failed_transactions}")
+        
+        # 7. Eredeti user törlése - csak ha nincs hibás tranzakció
+        original_user_deleted = False
+        print(f"Törlési feltétel ellenőrzése: failed_transactions={failed_transactions}, updated_transactions={updated_transactions}")
+        
+        if failed_transactions == 0:
+            print("Eredeti user törlése...")
+            delete_url = f"https://api.adalo.com/v0/apps/{app_id}/collections/{collection_id}/{user_id}"
+            print(f"DELETE URL: {delete_url}")
+            delete_response = requests.delete(delete_url, headers=headers)
+            print(f"DELETE Status: {delete_response.status_code}")
+            
+            if delete_response.status_code in [200, 204]:
+                original_user_deleted = True
+                print(f"✅ Eredeti user {user_id} sikeresen törölve")
+            else:
+                print(f"❌ Eredeti user {user_id} törlési hiba: {delete_response.status_code}")
+                print(f"DELETE Response: {delete_response.text}")
+        else:
+            print(f"Eredeti user nem törölhető: failed_transactions={failed_transactions}")
+        
+        return {
+            "success": True,
+            "message": "Felhasználó sikeresen másolva",
+            "original_user_id": user_id,
+            "new_user_id": new_user_id,
+            "new_email": basic_user_data['Email'],
+            "new_full_name": basic_user_data['Full Name'],
+            "timestamp": timestamp,
+            "arrays_updated": put_response.status_code in [200, 201],
+            "transactions_updated": updated_transactions,
+            "transactions_failed": failed_transactions,
+            "total_transactions": len(original_transactions) if original_transactions else 0,
+            "original_user_deleted": original_user_deleted
+        }
+        
+    except requests.exceptions.RequestException as e:
+        print(f"Adalo API hívási hiba: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Hiba az Adalo API hívás során: {str(e)}"
+        )
+    except Exception as e:
+        print(f"Váratlan hiba történt: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
 @app.get("/ping")
 async def ping():
     """
@@ -970,4 +1223,4 @@ if __name__ == "__main__":
     # Koyeb/Render más módon indítja el az alkalmazást (pl. gunicorn vagy uvicorn)
     # Ügyelj rá, hogy az ADALO_API_KEY környezeti változó be legyen állítva lokálisan (.env)
     # és a telepítési platformon is.
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=8003) 
