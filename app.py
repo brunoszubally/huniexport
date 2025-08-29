@@ -411,12 +411,7 @@ async def download_partner_transactions(
                     detail=f"Nem található 'finalized' tranzakció a partner_id={partner_id} számára"
                  )
             
-            # DataFrame létrehozása
-            print("DataFrame létrehozása (Excel végpont)...")
-            df = pd.DataFrame(finalized_partner_transactions)
-            print(f"DataFrame oszlopok (eredeti): {list(df.columns)}")
-            
-            # Kuponok lekérdezése és coupon_name hozzáadása
+            # Kuponok lekérdezése és coupon_name hozzáadása a DataFrame létrehozása ELŐTT
             print("Kuponok lekérdezése a coupon_name mezőhöz...")
             coupons_url = f"https://api.adalo.com/v0/apps/{ADALO_COUPONS_APP_ID}/collections/{ADALO_COUPONS_COLLECTION_ID}"
             coupons_headers = {
@@ -438,14 +433,22 @@ async def download_partner_transactions(
             except Exception as e:
                 print(f"Hiba a kuponok lekérdezése során: {str(e)}")
             
-            # coupon_name hozzáadása a tranzakciókhoz
+            # coupon_name hozzáadása a tranzakciókhoz MINDEN tranzakcióhoz
+            print("Coupon_name hozzáadása a tranzakciókhoz...")
             for transaction in finalized_partner_transactions:
                 coupon_ids = transaction.get("coupon_transaction", [])
                 if coupon_ids and isinstance(coupon_ids, list) and len(coupon_ids) > 0:
                     coupon_id = coupon_ids[0]  # Első kupon ID használata
                     transaction["coupon_name"] = coupons_dict.get(coupon_id, "")
+                    print(f"Tranzakció {transaction.get('id')}: coupon_id={coupon_id}, coupon_name='{transaction['coupon_name']}'")
                 else:
                     transaction["coupon_name"] = ""
+                    print(f"Tranzakció {transaction.get('id')}: nincs kupon")
+            
+            # DataFrame létrehozása a coupon_name hozzáadása UTÁN
+            print("DataFrame létrehozása (Excel végpont)...")
+            df = pd.DataFrame(finalized_partner_transactions)
+            print(f"DataFrame oszlopok (eredeti): {list(df.columns)}")
             
             # Kívánt oszlopok kiválasztása és átnevezése
             desired_columns = [
