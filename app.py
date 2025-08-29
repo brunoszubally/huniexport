@@ -24,6 +24,10 @@ ADALO_TRANSACTIONS_COLLECTION_ID = os.getenv("ADALO_TRANSACTIONS_COLLECTION_ID",
 ADALO_STATS_APP_ID = os.getenv("ADALO_STATS_APP_ID", "105b8ea3-f2e9-498e-b939-03d445237d78")
 ADALO_STATS_COLLECTION_ID = os.getenv("ADALO_STATS_COLLECTION_ID", "t_ashzitr0lvm0u1dibo7jada75")
 
+# Coupons (kuponok) collection
+ADALO_COUPONS_APP_ID = os.getenv("ADALO_COUPONS_APP_ID", "105b8ea3-f2e9-498e-b939-03d445237d78")
+ADALO_COUPONS_COLLECTION_ID = os.getenv("ADALO_COUPONS_COLLECTION_ID", "t_4qtjjg01audh5q46q83lc7rkt")
+
 # Fő API kulcs (mindenhez ugyanaz, ha nincs külön)
 ADALO_API_KEY = os.getenv("ADALO_API_KEY", "2oq7qmxcjwa4m1tcqdf1w1e8i")
 
@@ -412,6 +416,37 @@ async def download_partner_transactions(
             df = pd.DataFrame(finalized_partner_transactions)
             print(f"DataFrame oszlopok (eredeti): {list(df.columns)}")
             
+            # Kuponok lekérdezése és coupon_name hozzáadása
+            print("Kuponok lekérdezése a coupon_name mezőhöz...")
+            coupons_url = f"https://api.adalo.com/v0/apps/{ADALO_COUPONS_APP_ID}/collections/{ADALO_COUPONS_COLLECTION_ID}"
+            coupons_headers = {
+                "Authorization": f"Bearer {ADALO_TRANSACTIONS_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            coupons_dict = {}
+            try:
+                coupons_response = requests.get(coupons_url, headers=coupons_headers)
+                if coupons_response.status_code == 200:
+                    coupons_data = coupons_response.json()
+                    coupons = coupons_data.get("records", [])
+                    for coupon in coupons:
+                        coupons_dict[coupon.get("id")] = coupon.get("coupon_name", "")
+                    print(f"Sikeresen betöltött {len(coupons_dict)} kupon")
+                else:
+                    print(f"Kuponok lekérdezése sikertelen: {coupons_response.status_code}")
+            except Exception as e:
+                print(f"Hiba a kuponok lekérdezése során: {str(e)}")
+            
+            # coupon_name hozzáadása a tranzakciókhoz
+            for transaction in finalized_partner_transactions:
+                coupon_ids = transaction.get("coupon_transaction", [])
+                if coupon_ids and isinstance(coupon_ids, list) and len(coupon_ids) > 0:
+                    coupon_id = coupon_ids[0]  # Első kupon ID használata
+                    transaction["coupon_name"] = coupons_dict.get(coupon_id, "")
+                else:
+                    transaction["coupon_name"] = ""
+            
             # Kívánt oszlopok kiválasztása és átnevezése
             desired_columns = [
                 "id",
@@ -419,6 +454,7 @@ async def download_partner_transactions(
                 "user_transaction",
                 "partner_transaction", # Eredetileg kért oszlop, de a lekeresnel szurtunk ra, user_transaction es coupon_transaction volt helyette
                 "coupon_transaction",
+                "coupon_name",
                 "spend_value",
                 "discount_value",
                 "saved_value",
@@ -438,6 +474,7 @@ async def download_partner_transactions(
                 "user_transaction": "User id-ja",
                 "partner_transaction": "Partner id-ja", # Hozzáadva az átnevezéshez, ha létezik
                 "coupon_transaction": "Kupon id-ja",
+                "coupon_name": "Kupon neve",
                 "spend_value": "Költés",
                 "discount_value": "Kedvezmény %",
                 "saved_value": "Spórolás",
