@@ -1,0 +1,17 @@
+{
+  "id": 5,
+  "transaction_id": "szubally.bruno@gmail.com_2025-02-26T09:56:13.388Z",
+  "transaction_status": "qr_read",
+  "user_transaction": [197],
+  "partner_transaction": [151],
+  "coupon_transaction": null,
+  "spend_value": 10000,
+  "discount_value": null,
+  "saved_value": null,
+  "hunicoin_value": null,
+  "jutalek_value": null,
+  "jouser_transact": null,
+  "test_user_transaction": null,
+  "created_at": "2025-02-26T09:56:13.688Z",
+  "updated_at": "2025-02-26T10:16:55.622Z"
+} 

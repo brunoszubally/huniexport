@@ -628,17 +628,22 @@ async def download_users(
             filtered_users = []
             for user in users:
                 if isinstance(user, dict):
+                    # Email ellenőrzés - csak nem üres email címmel rendelkező userek
+                    email = user.get("email", "")
+                    if not email:
+                        continue
+
                     created_at_str = user.get("created_at")
                     if created_at_str:
                         try:
                             created_at = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-                            
+
                             include_user = True
                             if from_datetime and created_at < from_datetime:
                                 include_user = False
                             if to_datetime and created_at > to_datetime:
                                 include_user = False
-                            
+
                             if include_user:
                                 filtered_users.append(user)
                         except (ValueError, TypeError) as e:
@@ -651,7 +656,7 @@ async def download_users(
                         filtered_users.append(user)
 
             print(f"Szűrt felhasználók száma: {len(filtered_users)}")
-            
+
             if not filtered_users:
                 raise HTTPException(
                     status_code=404,
@@ -660,7 +665,7 @@ async def download_users(
 
             # DataFrame létrehozása
             df = pd.DataFrame(filtered_users)
-            
+
             # Kívánt oszlopok kiválasztása és átnevezése
             column_mapping = {
                 "id": "Felhasználó azonosító",
@@ -800,17 +805,22 @@ async def download_users_collection(
             filtered_users = []
             for user in users:
                 if isinstance(user, dict):
+                    # Email ellenőrzés - csak nem üres email címmel rendelkező userek
+                    email = user.get("Email", "")
+                    if not email:
+                        continue
+
                     created_at_str = user.get("created_at")
                     if created_at_str:
                         try:
                             created_at = datetime.strptime(created_at_str, '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
-                            
+
                             include_user = True
                             if from_datetime and created_at < from_datetime:
                                 include_user = False
                             if to_datetime and created_at > to_datetime:
                                 include_user = False
-                            
+
                             if include_user:
                                 filtered_users.append(user)
                         except (ValueError, TypeError) as e:
@@ -823,7 +833,7 @@ async def download_users_collection(
                         filtered_users.append(user)
 
             print(f"Szűrt felhasználók száma: {len(filtered_users)}")
-            
+
             if not filtered_users:
                 raise HTTPException(
                     status_code=404,
@@ -832,7 +842,7 @@ async def download_users_collection(
 
             # DataFrame létrehozása
             df = pd.DataFrame(filtered_users)
-            
+
             # Kívánt oszlopok kiválasztása és átnevezése
             column_mapping = {
                 "id": "Felhasználó azonosító",
