@@ -568,29 +568,58 @@ async def download_users(
     print(f"API URL: {url}")
     
     try:
-        print("Adalo Users API hívás indítása...")
-        response = requests.get(url, headers=headers)
-        print(f"Adalo API válasz státuszkód: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"Hibás Adalo API válasz: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Adalo API hiba: {response.text}"
-            )
-        
-        try:
-            users = response.json()
-            
+        print("Adalo Users API hívás indítása (paginálva)...")
+        users = []
+        offset = 0
+        limit = 100
+        page = 1
+
+        while True:
+            params = {"offset": offset, "limit": limit}
+            response = requests.get(url, headers=headers, params=params)
+            print(f"Oldal {page} - Adalo API válasz státuszkód: {response.status_code}")
+
+            if response.status_code != 200:
+                print(f"Hibás Adalo API válasz: {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Adalo API hiba: {response.text}"
+                )
+
+            data = response.json()
+
             # Adalo API válasz formátum ellenőrzése
-            if isinstance(users, dict) and "users" in users:
-                users = users["users"]
-            elif not isinstance(users, list):
+            if isinstance(data, dict) and "records" in data:
+                records = data["records"]
+            elif isinstance(data, dict) and "users" in data:
+                records = data["users"]
+            elif isinstance(data, list):
+                records = data
+            else:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Váratlan Adalo API válasz formátum: {type(users)}"
+                    detail=f"Váratlan Adalo API válasz formátum: {type(data)}"
                 )
-            
+
+            print(f"Oldal {page}: {len(records)} rekord (offset: {offset})")
+
+            if not records:
+                break
+
+            users.extend(records)
+
+            # Paginálás: ha van offset a válaszban, használjuk azt; egyébként léptetünk
+            next_offset = data.get("offset") if isinstance(data, dict) else None
+            if next_offset is not None and next_offset > offset:
+                offset = next_offset
+            elif len(records) >= limit:
+                offset += limit
+            else:
+                break
+
+            page += 1
+
+        try:
             print(f"Összes felhasználó száma: {len(users)}")
             
             # Dátum paraméterek feldolgozása
@@ -753,21 +782,45 @@ async def download_users_collection(
     print(f"API URL: {url}")
     
     try:
-        print("Adalo Users Collection API hívás indítása...")
-        response = requests.get(url, headers=headers)
-        print(f"Adalo API válasz státuszkód: {response.status_code}")
-        
-        if response.status_code != 200:
-            print(f"Hibás Adalo API válasz: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Adalo API hiba: {response.text}"
-            )
-        
-        try:
+        print("Adalo Users Collection API hívás indítása (paginálva)...")
+        users = []
+        offset = 0
+        limit = 100
+        page = 1
+
+        while True:
+            params = {"offset": offset, "limit": limit}
+            response = requests.get(url, headers=headers, params=params)
+            print(f"Oldal {page} - Adalo API válasz státuszkód: {response.status_code}")
+
+            if response.status_code != 200:
+                print(f"Hibás Adalo API válasz: {response.text}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Adalo API hiba: {response.text}"
+                )
+
             data = response.json()
-            users = data.get("records", [])
-            
+            records = data.get("records", [])
+
+            print(f"Oldal {page}: {len(records)} rekord (offset: {offset})")
+
+            if not records:
+                break
+
+            users.extend(records)
+
+            next_offset = data.get("offset")
+            if next_offset is not None and next_offset > offset:
+                offset = next_offset
+            elif len(records) >= limit:
+                offset += limit
+            else:
+                break
+
+            page += 1
+
+        try:
             print(f"Összes felhasználó száma: {len(users)}")
             
             # Dátum paraméterek feldolgozása
