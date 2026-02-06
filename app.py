@@ -4,6 +4,7 @@ import pandas as pd
 import requests
 from datetime import datetime, timezone
 import os
+import json
 from dotenv import load_dotenv
 from typing import List, Optional
 from pydantic import BaseModel
@@ -1672,6 +1673,129 @@ async def sendmails(request_data: SendMailsRequest):
     except Exception as e:
         print(f"Váratlan hiba történt: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Váratlan szerverhiba: {str(e)}")
+
+@app.get("/hun/{user_id}")
+async def set_hungarian(user_id: int):
+    """
+    Beállítja a megadott felhasználó text_ mezőit magyar nyelvre.
+    """
+    texts_path = os.path.join(os.path.dirname(__file__), "texts_hun.json")
+    with open(texts_path, "r", encoding="utf-8") as f:
+        texts = json.load(f)
+
+    url = f"https://api.adalo.com/v0/apps/{ADALO_USERS_APP_ID}/collections/{ADALO_USERS_COLLECTION_ID}/{user_id}"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    resp = requests.put(url, headers=headers, json=texts)
+    if resp.status_code not in [200, 201]:
+        raise HTTPException(status_code=resp.status_code, detail=f"Adalo API hiba: {resp.text}")
+
+    return {"success": True, "user_id": user_id, "language": "hun", "updated_fields": texts}
+
+
+@app.get("/eng/{user_id}")
+async def set_english(user_id: int):
+    """
+    Beállítja a megadott felhasználó text_ mezőit angol nyelvre.
+    """
+    texts_path = os.path.join(os.path.dirname(__file__), "texts_eng.json")
+    with open(texts_path, "r", encoding="utf-8") as f:
+        texts = json.load(f)
+
+    url = f"https://api.adalo.com/v0/apps/{ADALO_USERS_APP_ID}/collections/{ADALO_USERS_COLLECTION_ID}/{user_id}"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    resp = requests.put(url, headers=headers, json=texts)
+    if resp.status_code not in [200, 201]:
+        raise HTTPException(status_code=resp.status_code, detail=f"Adalo API hiba: {resp.text}")
+
+    return {"success": True, "user_id": user_id, "language": "eng", "updated_fields": texts}
+
+
+@app.get("/set-all-hungarian")
+async def set_all_hungarian():
+    """
+    Végigmegy az összes useren és beállítja a text_ mezőket magyar nyelvre.
+    Csak azokat a usereket frissíti, akiknek van email címe.
+    """
+    texts_path = os.path.join(os.path.dirname(__file__), "texts_hun.json")
+    with open(texts_path, "r", encoding="utf-8") as f:
+        texts = json.load(f)
+
+    print("\n=== Összes user magyar szövegre állítása ===")
+
+    url = f"https://api.adalo.com/v0/apps/{ADALO_USERS_APP_ID}/collections/{ADALO_USERS_COLLECTION_ID}"
+    headers = {
+        "Authorization": f"Bearer {ADALO_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # Összes user lekérése paginálva
+    all_users = []
+    offset = 0
+    limit = 100
+    page = 1
+
+    while True:
+        params = {"offset": offset, "limit": limit}
+        resp = requests.get(url, headers=headers, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail=f"Adalo API hiba: {resp.text}")
+
+        data = resp.json()
+        records = data.get("records", [])
+        print(f"Oldal {page}: {len(records)} rekord")
+
+        if not records:
+            break
+
+        all_users.extend(records)
+
+        next_offset = data.get("offset")
+        if next_offset is not None and next_offset > offset:
+            offset = next_offset
+        elif len(records) >= limit:
+            offset += limit
+        else:
+            break
+
+        page += 1
+
+    # Szűrés: csak akiknek van email
+    users_with_email = [u for u in all_users if u.get("Email")]
+    print(f"Összes user: {len(all_users)}, email-lel rendelkező: {len(users_with_email)}")
+
+    updated = 0
+    errors = []
+
+    for user in users_with_email:
+        uid = user.get("id")
+        put_url = f"{url}/{uid}"
+        put_resp = requests.put(put_url, headers=headers, json=texts)
+        if put_resp.status_code in [200, 201]:
+            updated += 1
+        else:
+            errors.append({"user_id": uid, "status": put_resp.status_code, "detail": put_resp.text})
+
+        if updated % 50 == 0 and updated > 0:
+            print(f"Frissítve: {updated}/{len(users_with_email)}")
+
+    print(f"Kész! Frissítve: {updated}, Hibás: {len(errors)}")
+
+    return {
+        "success": True,
+        "total_users": len(users_with_email),
+        "updated": updated,
+        "errors_count": len(errors),
+        "errors": errors[:20]
+    }
+
 
 @app.get("/ping")
 async def ping():
