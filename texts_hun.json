@@ -55,5 +55,6 @@
     "text_delete_profile": "Profil törlése",
     "text_sikeres_azonositas": "Sikeres azonosítás!",
     "text_gender_head": "Nemed",
-    "text_discount": "Kedvezmények"
+    "text_discount": "kedvezmények",
+    "text_back":"visszalépés"
 }
